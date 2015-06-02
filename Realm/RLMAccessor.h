@@ -18,9 +18,15 @@
 
 #import <Foundation/Foundation.h>
 
-@class RLMObjectSchema, RLMProperty, RLMObjectBase;
+@class RLMObjectSchema, RLMProperty, RLMObjectBase, RLMRealm;
 
 typedef NSUInteger RLMCreationOptions;
+
+namespace realm {
+    class Table;
+    template<typename T> class BasicRow;
+    typedef BasicRow<Table> Row;
+}
 
 //
 // Accessors Class Creation/Caching
