@@ -16,26 +16,13 @@
 //
 ////////////////////////////////////////////////////////////////////////////
 
-#import <Realm/RLMObjectSchema.h>
+#import "RLMProperty_Private.h"
+#import "property.hpp"
 
-@class RLMRealm;
+@interface RLMProperty () {
+    @public
+    realm::Property _property;
+}
 
-// RLMObjectSchema private
-@interface RLMObjectSchema ()
-
-// writable redecleration
-@property (nonatomic, readwrite, copy) NSArray *properties;
-@property (nonatomic, readwrite, assign) bool isSwiftClass;
-
-// class used for this object schema
-@property (nonatomic, readwrite, assign) Class objectClass;
-@property (nonatomic, readwrite, assign) Class accessorClass;
-@property (nonatomic, readwrite, assign) Class standaloneClass;
-
-// The Realm retains its object schemas, so they need to not retain the Realm
-@property (nonatomic, unsafe_unretained) RLMRealm *realm;
-
-// returns a cached or new schema for a given object class
-+(instancetype)schemaForObjectClass:(Class)objectClass;
-
+- (instancetype)initWithProperty:(realm::Property)property;
 @end

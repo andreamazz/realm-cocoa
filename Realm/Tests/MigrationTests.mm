@@ -21,7 +21,7 @@
 #import "RLMMigration.h"
 #import "RLMObject_Private.h"
 #import "RLMObjectSchema_Private.hpp"
-#import "RLMProperty_Private.h"
+#import "RLMProperty_Private.hpp"
 #import "RLMRealm_Dynamic.h"
 #import "RLMRealm_Private.hpp"
 #import "RLMSchema_Private.h"
@@ -173,7 +173,7 @@
     @autoreleasepool {
         // verify migration
         RLMRealm *realm = [self realmWithTestPath];
-        XCTAssertFalse(realm.group->has_table(RLMStringDataWithNSString(RLMTableNameForClass(@"DeletedClass"))), @"The deleted class should not have a table.");
+        XCTAssertFalse(realm.group->has_table(ObjectStore::table_name_for_class("DeletedClass")), @"The deleted class should not have a table.");
         XCTAssertEqual(0U, [StringObject allObjectsInRealm:realm].count);
     }
 }
@@ -258,7 +258,7 @@
     // create schema to migrate from with single string column
     RLMObjectSchema *objectSchema = [RLMObjectSchema schemaForObjectClass:MigrationObject.class];
     RLMProperty *thirdProperty = [[RLMProperty alloc] initWithName:@"deletedCol" type:RLMPropertyTypeBool objectClassName:nil indexed:NO];
-    thirdProperty.column = 2;
+    thirdProperty->_property.table_column = 2;
     objectSchema.properties = [objectSchema.properties arrayByAddingObject:thirdProperty];
 
     // create realm with old schema and populate
@@ -330,7 +330,7 @@
     // make string an int
     RLMObjectSchema *objectSchema = [RLMObjectSchema schemaForObjectClass:MigrationObject.class];
     RLMProperty *stringCol = objectSchema.properties[1];
-    stringCol.type = RLMPropertyTypeInt;
+    stringCol->_property.type = PropertyTypeInt;
     stringCol.objcType = 'i';
 
     // create realm with old schema and populate
@@ -362,8 +362,7 @@
 - (void)testPrimaryKeyMigration {
     // make string an int
     RLMObjectSchema *objectSchema = [RLMObjectSchema schemaForObjectClass:MigrationPrimaryKeyObject.class];
-    objectSchema.primaryKeyProperty.isPrimary = NO;
-    objectSchema.primaryKeyProperty = nil;
+    objectSchema->_objectSchema.primary_key = "";
 
     // create realm with old schema and populate
     RLMRealm *realm = [self realmWithSingleObject:objectSchema];
@@ -401,8 +400,7 @@
     [realm commitWriteTransaction];
 
     objectSchema = [RLMObjectSchema schemaForObjectClass:MigrationPrimaryKeyObject.class];
-    objectSchema.primaryKeyProperty.isPrimary = NO;
-    objectSchema.primaryKeyProperty = nil;
+    objectSchema->_objectSchema.primary_key = "";
 
     // needs a no-op migration
     XCTAssertThrows([self realmWithSingleObject:objectSchema]);
@@ -421,8 +419,7 @@
 - (void)testStringPrimaryKeyMigration {
     // make string an int
     RLMObjectSchema *objectSchema = [RLMObjectSchema schemaForObjectClass:MigrationStringPrimaryKeyObject.class];
-    objectSchema.primaryKeyProperty.isPrimary = NO;
-    objectSchema.primaryKeyProperty = nil;
+    objectSchema->_objectSchema.primary_key = "";
 
     // create realm with old schema and populate
     RLMRealm *realm = [self realmWithSingleObject:objectSchema];
@@ -447,7 +444,7 @@
     RLMObjectSchema *objectSchema = [RLMObjectSchema schemaForObjectClass:MigrationStringPrimaryKeyObject.class];
 
     // create without search index
-    objectSchema.primaryKeyProperty.indexed = NO;
+    objectSchema.primaryKeyProperty->_property.is_indexed = false;
 
     // create realm with old schema and populate
     RLMRealm *realm = [self realmWithSingleObject:objectSchema];
@@ -472,7 +469,7 @@
     RLMObjectSchema *objectSchema = [RLMObjectSchema schemaForObjectClass:MigrationPrimaryKeyObject.class];
 
     // create without search index
-    objectSchema.primaryKeyProperty.indexed = NO;
+    objectSchema.primaryKeyProperty->_property.is_indexed = false;
 
     // create realm with old schema and populate
     @autoreleasepool {
@@ -502,8 +499,7 @@
 - (void)testDuplicatePrimaryKeyMigration {
     // make the pk non-primary so that we can add duplicate values
     RLMObjectSchema *objectSchema = [RLMObjectSchema schemaForObjectClass:MigrationPrimaryKeyObject.class];
-    objectSchema.primaryKeyProperty.isPrimary = NO;
-    objectSchema.primaryKeyProperty = nil;
+    objectSchema->_objectSchema.primary_key = "";
 
     // populate with values that will be invalid when the property is made primary
     RLMRealm *realm = [self realmWithSingleObject:objectSchema];
@@ -544,8 +540,7 @@
 - (void)testIncompleteMigrationIsRolledBack {
     // make string an int
     RLMObjectSchema *objectSchema = [RLMObjectSchema schemaForObjectClass:MigrationPrimaryKeyObject.class];
-    objectSchema.primaryKeyProperty.isPrimary = NO;
-    objectSchema.primaryKeyProperty = nil;
+    objectSchema->_objectSchema.primary_key = "";
 
     // create realm with old schema and populate
     @autoreleasepool {
@@ -595,7 +590,7 @@
         // make string an int
         RLMObjectSchema *objectSchema = [RLMObjectSchema schemaForObjectClass:MigrationObject.class];
         RLMProperty *stringCol = objectSchema.properties[1];
-        stringCol.type = RLMPropertyTypeInt;
+        stringCol->_property.type = PropertyTypeInt;
         stringCol.objcType = 'i';
 
         // create realm with old schema and populate
@@ -745,7 +740,7 @@
 
     RLMSchema *index = [[RLMSchema alloc] init];
     RLMObjectSchema *objectSchema = [RLMObjectSchema schemaForObjectClass:StringObject.class];
-    [objectSchema.properties[0] setIndexed:YES];
+    RLMDynamicCast<RLMProperty>(objectSchema.properties[0])->_property.is_indexed = true;
     index.objectSchema = @[objectSchema];
 
     auto columnIsIndexed = ^(RLMRealm *realm) {

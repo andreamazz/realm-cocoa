@@ -609,8 +609,9 @@ static Class RLMCreateAccessorClass(Class objectClass,
     }
     
     // override getters/setters for each propery
-    for (unsigned int propNum = 0; propNum < schema.properties.count; propNum++) {
-        RLMProperty *prop = schema.properties[propNum];
+    NSArray *properties = schema.properties;
+    for (unsigned int propNum = 0; propNum < properties.count; propNum++) {
+        RLMProperty *prop = properties[propNum];
         RLMAccessorCode accessorCode = accessorCodeForType(prop.objcType, prop.type);
         if (prop.getterSel && getterGetter) {
             IMP getterImp = getterGetter(prop, accessorCode, prop.objectClassName);

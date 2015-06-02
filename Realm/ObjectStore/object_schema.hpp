@@ -16,26 +16,32 @@
 //
 ////////////////////////////////////////////////////////////////////////////
 
-#import <Realm/RLMObjectSchema.h>
+#ifndef __realm__object_schema__
+#define __realm__object_schema__
 
-@class RLMRealm;
+#include <string>
+#include <vector>
 
-// RLMObjectSchema private
-@interface RLMObjectSchema ()
+#include "property.hpp"
+#include <realm/group.hpp>
 
-// writable redecleration
-@property (nonatomic, readwrite, copy) NSArray *properties;
-@property (nonatomic, readwrite, assign) bool isSwiftClass;
+namespace realm {
+    class ObjectSchema {
+    public:
+        ObjectSchema() {}
+        ObjectSchema(Group *group, std::string name);
 
-// class used for this object schema
-@property (nonatomic, readwrite, assign) Class objectClass;
-@property (nonatomic, readwrite, assign) Class accessorClass;
-@property (nonatomic, readwrite, assign) Class standaloneClass;
+        static std::vector<ObjectSchema> object_schema_from_group(Group *group);
 
-// The Realm retains its object schemas, so they need to not retain the Realm
-@property (nonatomic, unsafe_unretained) RLMRealm *realm;
+        std::string name;
+        std::vector<Property> properties;
+        std::string primary_key;
 
-// returns a cached or new schema for a given object class
-+(instancetype)schemaForObjectClass:(Class)objectClass;
+        std::vector<Property>::iterator property_for_name(std::string name);
+        std::vector<Property>::iterator primary_key_property() {
+            return property_for_name(primary_key);
+        }
+    };
+}
 
-@end
+#endif /* defined(__realm__object_schema__) */

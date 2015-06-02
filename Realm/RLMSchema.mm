@@ -27,9 +27,6 @@
 
 #import "object_store.hpp"
 #import <objc/runtime.h>
-#import <realm/group.hpp>
-
-NSString * const c_objectTableNamePrefix = @"class_";
 
 const uint64_t RLMNotVersioned = realm::ObjectStore::NotVersioned;
 
@@ -134,22 +131,14 @@ static NSMutableDictionary *s_localNameToClass;
 
 // schema based on tables in a realm
 + (instancetype)dynamicSchemaFromRealm:(RLMRealm *)realm {
-    // generate object schema and class mapping for all tables in the realm
-    unsigned long numTables = realm.group->size();
-    NSMutableArray *schemaArray = [NSMutableArray arrayWithCapacity:numTables];
-    
-    // cache descriptors for all subclasses of RLMObject
     RLMSchema *schema = [[RLMSchema alloc] init];
-    for (unsigned long i = 0; i < numTables; i++) {
-        NSString *className = RLMClassForTableName(@(realm.group->get_table_name(i).data()));
-        if (className) {
-            RLMObjectSchema *object = [RLMObjectSchema schemaFromTableForClassName:className realm:realm];
-            object.table = realm.group->get_table(i).get();
-            [schemaArray addObject:object];
-        }
+    NSMutableArray *schemaArray = [NSMutableArray array];
+    auto object_schema = ObjectSchema::object_schema_from_group(realm.group);
+    for (unsigned long i = 0; i < object_schema.size(); i++) {
+        RLMObjectSchema *objectSchema = [[RLMObjectSchema alloc] init];
+        objectSchema->_objectSchema = object_schema[i];
+        [schemaArray addObject:objectSchema];
     }
-    
-    // set class array and mapping
     schema.objectSchema = schemaArray;
     return schema;
 }
@@ -164,16 +153,6 @@ static NSMutableDictionary *s_localNameToClass;
 - (id)copyWithZone:(NSZone *)zone {
     RLMSchema *schema = [[RLMSchema allocWithZone:zone] init];
     schema.objectSchema = [[NSArray allocWithZone:zone] initWithArray:self.objectSchema copyItems:YES];
-    return schema;
-}
-
-- (instancetype)shallowCopy {
-    RLMSchema *schema = [[RLMSchema alloc] init];
-    NSMutableArray *objectSchema = [NSMutableArray arrayWithCapacity:_objectSchema.count];
-    for (RLMObjectSchema *schema in _objectSchema) {
-        [objectSchema addObject:[schema shallowCopy]];
-    }
-    schema.objectSchema = objectSchema;
     return schema;
 }
 

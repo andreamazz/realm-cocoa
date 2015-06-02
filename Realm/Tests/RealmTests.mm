@@ -33,16 +33,6 @@ extern "C" {
 - (BOOL)compact;
 @end
 
-@interface RLMObjectSchema (Private)
-+ (instancetype)schemaForObjectClass:(Class)objectClass;
-
-@property (nonatomic, readwrite, assign) Class objectClass;
-@end
-
-@interface RLMSchema (Private)
-@property (nonatomic, readwrite, copy) NSArray *objectSchema;
-@end
-
 @interface RealmTests : RLMTestCase
 @end
 

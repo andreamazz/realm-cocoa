@@ -51,7 +51,7 @@
 /**
  Object class name - specify object types for RLMObject and RLMArray properties.
  */
-@property (nonatomic, readonly, copy) NSString *objectClassName;
+@property (nonatomic, readonly) NSString *objectClassName;
 
 /**
  Returns YES if property objects are equal.

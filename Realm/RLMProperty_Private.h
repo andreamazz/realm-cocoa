@@ -38,15 +38,12 @@
                                          ivar:(Ivar)ivar
                               objectClassName:(NSString *)objectClassName;
 
-// private setters
-@property (nonatomic, assign) NSUInteger column;
-@property (nonatomic, readwrite, assign) RLMPropertyType type;
-@property (nonatomic, readwrite) BOOL indexed;
-@property (nonatomic, copy) NSString *objectClassName;
+// private properties
+@property (nonatomic, readonly) NSUInteger column;
+@property (nonatomic, readonly) BOOL isPrimary;
 
 // private properties
 @property (nonatomic, assign) char objcType;
-@property (nonatomic, assign) BOOL isPrimary;
 @property (nonatomic, assign) Ivar swiftListIvar;
 
 // getter and setter names

@@ -21,57 +21,76 @@
 #import "RLMArray.h"
 #import "RLMListBase.h"
 #import "RLMObject_Private.h"
-#import "RLMProperty_Private.h"
+#import "RLMProperty_Private.hpp"
 #import "RLMRealm_Dynamic.h"
 #import "RLMRealm_Private.hpp"
 #import "RLMSchema_Private.h"
 #import "RLMSwiftSupport.h"
 #import "RLMUtil.hpp"
 
-#import "object_store.hpp"
 #import <realm/group.hpp>
-
-// private properties
-@interface RLMObjectSchema ()
-@property (nonatomic, readwrite) NSDictionary *propertiesByName;
-@property (nonatomic, readwrite, assign) NSString *className;
-@end
+#import "object_store.hpp"
 
 @implementation RLMObjectSchema {
     // table accessor optimization
     realm::TableRef _table;
 }
 
+@dynamic className;
+@dynamic properties;
+@dynamic primaryKeyProperty;
+
 - (instancetype)initWithClassName:(NSString *)objectClassName objectClass:(Class)objectClass properties:(NSArray *)properties {
     self = [super init];
-    self.className = objectClassName;
-    self.properties = properties;
-    self.objectClass = objectClass;
+    if (self) {
+        _objectSchema.name = objectClassName.UTF8String;
+        [self setProperties:properties];
+
+        self.objectClass = objectClass;
+    }
     return self;
 }
 
 // return properties by name
 -(RLMProperty *)objectForKeyedSubscript:(id <NSCopying>)key {
-    return _propertiesByName[key];
-}
-
-// create property map when setting property array
--(void)setProperties:(NSArray *)properties {
-    _properties = properties;
-    NSMutableDictionary *map = [NSMutableDictionary dictionaryWithCapacity:_properties.count];
-    for (RLMProperty *prop in _properties) {
-        map[prop.name] = prop;
-        if (prop.isPrimary) {
-            self.primaryKeyProperty = prop;
-        }
+    NSString *name = RLMDynamicCast<NSString>(key);
+    if (!name) {
+        return nil;
     }
-    _propertiesByName = map;
+
+    auto property_iter = _objectSchema.property_for_name(name.UTF8String);
+    if (property_iter == _objectSchema.properties.end()) {
+        return nil;
+    }
+
+    return [[RLMProperty alloc] initWithProperty:*property_iter];
 }
 
-- (void)setPrimaryKeyProperty:(RLMProperty *)primaryKeyProperty {
-    _primaryKeyProperty.isPrimary = NO;
-    primaryKeyProperty.isPrimary = YES;
-    _primaryKeyProperty = primaryKeyProperty;
+- (NSString *)className {
+    return [[NSString alloc] initWithBytesNoCopy:(void *)_objectSchema.name.c_str() length:_objectSchema.name.size() encoding:NSUTF8StringEncoding freeWhenDone:NO];
+}
+
+- (NSArray *)properties {
+    NSMutableArray *properties = [NSMutableArray arrayWithCapacity:_objectSchema.properties.size()];
+    for (auto iter = _objectSchema.properties.begin(); iter != _objectSchema.properties.end(); iter++) {
+        [properties addObject:[[RLMProperty alloc] initWithProperty:*iter]];
+    }
+    return properties;
+}
+
+- (void)setProperties:(NSArray *)properties {
+    _objectSchema.properties.clear();
+    for (RLMProperty *prop in properties) {
+        std::string propName = prop.name.UTF8String;
+        _objectSchema.properties.push_back(prop->_property);
+    }
+}
+
+- (RLMProperty *)primaryKeyProperty {
+    if (!_objectSchema.primary_key.length()) {
+        return nil;
+    }
+    return [[RLMProperty alloc] initWithProperty:*_objectSchema.primary_key_property()];
 }
 
 + (instancetype)schemaForObjectClass:(Class)objectClass {
@@ -83,7 +102,7 @@
     if (isSwift) {
         className = [RLMSwiftSupport demangleClassName:className];
     }
-    schema.className = className;
+    schema->_objectSchema.name = className.UTF8String;
     schema.objectClass = objectClass;
     schema.accessorClass = RLMDynamicObject.class;
     schema.isSwiftClass = isSwift;
@@ -114,10 +133,11 @@
     }
 
     if (NSString *primaryKey = [objectClass primaryKey]) {
+        schema->_objectSchema.primary_key = primaryKey.UTF8String;
         for (RLMProperty *prop in schema.properties) {
             if ([primaryKey isEqualToString:prop.name]) {
-                prop.indexed = YES;
-                schema.primaryKeyProperty = prop;
+                prop->_property.is_indexed = true;
+                prop->_property.is_primary = true;
                 break;
             }
         }
@@ -192,50 +212,12 @@
     return propArray;
 }
 
-
 // generate a schema from a table - specify the custom class name for the dynamic
 // class and the name to be used in the schema - used for migrations and dynamic interface
 +(instancetype)schemaFromTableForClassName:(NSString *)className realm:(RLMRealm *)realm {
-    realm::TableRef table = RLMTableForObjectClass(realm, className);
-    if (!table) {
-        return nil;
-    }
-
-    // create array of RLMProperties
-    size_t count = table->get_column_count();
-    NSMutableArray *propArray = [NSMutableArray arrayWithCapacity:count];
-    for (size_t col = 0; col < count; col++) {
-        // create new property
-        NSString *name = RLMStringDataToNSString(table->get_column_name(col).data());
-        RLMProperty *prop = [[RLMProperty alloc] initWithName:name
-                                                         type:RLMPropertyType(table->get_column_type(col))
-                                              objectClassName:nil
-                                                      indexed:table->has_search_index(col)];
-        prop.column = col;
-        if (prop.type == RLMPropertyTypeObject || prop.type == RLMPropertyTypeArray) {
-            // set link type for objects and arrays
-            realm::TableRef linkTable = table->get_link_target(col);
-            prop.objectClassName = RLMClassForTableName(@(linkTable->get_name().data()));
-        }
-
-        [propArray addObject:prop];
-    }
-
     // create schema object and set properties
     RLMObjectSchema *schema = [RLMObjectSchema new];
-    schema.properties = propArray;
-    schema.className = className;
-
-    // get primary key from realm metadata
-    std::string primaryKey = realm::ObjectStore::get_primary_key_for_object(realm.group, className.UTF8String);
-    if (primaryKey.length()) {
-        NSString *primaryKeyString = [NSString stringWithUTF8String:primaryKey.c_str()];
-        schema.primaryKeyProperty = schema[primaryKeyString];
-        if (!schema.primaryKeyProperty) {
-            NSString *reason = [NSString stringWithFormat:@"No property matching primary key '%@'", primaryKeyString];
-            @throw RLMException(reason);
-        }
-    }
+    schema->_objectSchema = ObjectSchema(realm.group, className.UTF8String);
 
     // for dynamic schema use vanilla RLMDynamicObject accessor classes
     schema.objectClass = RLMObject.class;
@@ -247,47 +229,29 @@
 
 - (id)copyWithZone:(NSZone *)zone {
     RLMObjectSchema *schema = [[RLMObjectSchema allocWithZone:zone] init];
-    schema->_objectClass = _objectClass;
-    schema->_className = _className;
-    schema->_objectClass = _objectClass;
-    schema->_accessorClass = _accessorClass;
-    schema->_standaloneClass = _standaloneClass;
-    schema->_isSwiftClass = _isSwiftClass;
+    schema->_objectSchema.name = _objectSchema.name;
+    [schema setProperties:self.properties];
 
-    // call property setter to reset map and primary key
-    schema.properties = [[NSArray allocWithZone:zone] initWithArray:_properties copyItems:YES];
-
-    // _table not copied as it's realm::Group-specific
-    return schema;
-}
-
-- (instancetype)shallowCopy {
-    RLMObjectSchema *schema = [[RLMObjectSchema alloc] init];
     schema->_objectClass = _objectClass;
-    schema->_className = _className;
     schema->_objectClass = _objectClass;
     schema->_accessorClass = _accessorClass;
     schema->_standaloneClass = _standaloneClass;
     schema->_isSwiftClass = _isSwiftClass;
-
-    // reuse propery array, map, and primary key instnaces
-    schema->_properties = _properties;
-    schema->_propertiesByName = _propertiesByName;
-    schema->_primaryKeyProperty = _primaryKeyProperty;
 
     // _table not copied as it's realm::Group-specific
     return schema;
 }
 
 - (BOOL)isEqualToObjectSchema:(RLMObjectSchema *)objectSchema {
-    if (objectSchema.properties.count != _properties.count) {
+    NSArray *properties = self.properties;
+    if (objectSchema.properties.count != properties.count) {
         return NO;
     }
 
     // compare ordered list of properties
     NSArray *otherProperties = objectSchema.properties;
-    for (NSUInteger i = 0; i < _properties.count; i++) {
-        RLMProperty *p1 = _properties[i], *p2 = otherProperties[i];
+    for (NSUInteger i = 0; i < properties.count; i++) {
+        RLMProperty *p1 = properties[i], *p2 = otherProperties[i];
         if (p1.type != p2.type ||
             p1.column != p2.column ||
             p1.isPrimary != p2.isPrimary ||
@@ -309,7 +273,7 @@
 
 - (realm::Table *)table {
     if (!_table) {
-        _table = RLMTableForObjectClass(_realm, _className);
+        _table = ObjectStore::table_for_object_type(_realm.group, _objectSchema.name);
     }
     return _table.get();
 }
@@ -319,16 +283,3 @@
 }
 
 @end
-
-realm::TableRef RLMTableForObjectClass(RLMRealm *realm,
-                                         NSString *className,
-                                         bool &created) {
-    NSString *tableName = RLMTableNameForClass(className);
-    return realm.group->get_or_add_table(tableName.UTF8String, &created);
-}
-
-realm::TableRef RLMTableForObjectClass(RLMRealm *realm,
-                                         NSString *className) {
-    NSString *tableName = RLMTableNameForClass(className);
-    return realm.group->get_table(tableName.UTF8String);
-}

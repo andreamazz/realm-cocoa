@@ -17,6 +17,7 @@
 ////////////////////////////////////////////////////////////////////////////
 
 #import "RLMObjectSchema_Private.h"
+#import "object_schema.hpp"
 
 namespace realm {
     class Table;
@@ -25,15 +26,11 @@ namespace realm {
 }
 
 // RLMObjectSchema private
-@interface RLMObjectSchema ()
+@interface RLMObjectSchema () {
+    @public
+    ObjectSchema _objectSchema;
+}
 
 @property (nonatomic) realm::Table *table;
 
-// shallow copy reusing properties and property map
-- (instancetype)shallowCopy;
-
 @end
-
-// get the table used to store object of objectClass
-realm::TableRef RLMTableForObjectClass(RLMRealm *realm, NSString *className, bool &created);
-realm::TableRef RLMTableForObjectClass(RLMRealm *realm, NSString *className);

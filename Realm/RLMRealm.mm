@@ -399,7 +399,7 @@ static id RLMAutorelease(id value) {
             RLMRealm *existingRealm = RLMGetAnyCachedRealmForPath(path);
             if (existingRealm) {
                 // if we have a cached realm on another thread, copy without a transaction
-                RLMRealmSetSchema(realm, [existingRealm.schema shallowCopy], false);
+                RLMRealmSetSchema(realm, [existingRealm.schema copy], false);
             }
             else {
                 // if we are the first realm at this path, set/align schema or perform migration if needed

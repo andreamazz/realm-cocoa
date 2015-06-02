@@ -33,59 +33,6 @@
 #import "object_store.hpp"
 #import <objc/message.h>
 
-static void RLMVerifyAndAlignColumns(RLMObjectSchema *tableSchema, RLMObjectSchema *objectSchema) {
-    NSMutableArray *properties = [NSMutableArray arrayWithCapacity:objectSchema.properties.count];
-    NSMutableArray *exceptionMessages = [NSMutableArray array];
-
-    // check to see if properties are the same
-    for (RLMProperty *tableProp in tableSchema.properties) {
-        RLMProperty *schemaProp = objectSchema[tableProp.name];
-        if (!schemaProp) {
-            [exceptionMessages addObject:[NSString stringWithFormat:@"Property '%@' is missing from latest object model.", tableProp.name]];
-            continue;
-        }
-        if (tableProp.type != schemaProp.type) {
-            [exceptionMessages addObject:[NSString stringWithFormat:@"Property types for '%@' property do not match. Old type '%@', new type '%@'.",
-                                          tableProp.name, RLMTypeToString(tableProp.type), RLMTypeToString(schemaProp.type)]];
-            continue;
-        }
-        if (tableProp.type == RLMPropertyTypeObject || tableProp.type == RLMPropertyTypeArray) {
-            if (![tableProp.objectClassName isEqualToString:schemaProp.objectClassName]) {
-                [exceptionMessages addObject:[NSString stringWithFormat:@"Target object type for property '%@' does not match. Old type '%@', new type '%@'.",
-                                              tableProp.name, tableProp.objectClassName, schemaProp.objectClassName]];
-            }
-        }
-        if (tableProp.isPrimary != schemaProp.isPrimary) {
-            if (tableProp.isPrimary) {
-                [exceptionMessages addObject:[NSString stringWithFormat:@"Property '%@' is no longer a primary key.", tableProp.name]];
-            }
-            else {
-                [exceptionMessages addObject:[NSString stringWithFormat:@"Property '%@' has been made a primary key.", tableProp.name]];
-            }
-        }
-
-        // create new property with aligned column
-        schemaProp.column = tableProp.column;
-        [properties addObject:schemaProp];
-    }
-
-    // check for new missing properties
-    for (RLMProperty *schemaProp in objectSchema.properties) {
-        if (!tableSchema[schemaProp.name]) {
-            [exceptionMessages addObject:[NSString stringWithFormat:@"Property '%@' has been added to latest object model.", schemaProp.name]];
-        }
-    }
-
-    // throw if errors
-    if (exceptionMessages.count) {
-        @throw RLMException([NSString stringWithFormat:@"Migration is required for object type '%@' due to the following errors:\n- %@",
-                             objectSchema.className, [exceptionMessages componentsJoinedByString:@"\n- "]]);
-    }
-
-    // set new properties array with correct column alignment
-    objectSchema.properties = properties;
-}
-
 // ensure all search indexes for all tables are up-to-date
 // does not need to be called from a write transaction
 static void RLMRealmUpdateIndexes(RLMRealm *realm) {
@@ -123,23 +70,6 @@ static void RLMRealmUpdateIndexes(RLMRealm *realm) {
 
     if (commitWriteTransaction) {
         [realm commitWriteTransaction];
-    }
-}
-
-// create a column for a property in a table
-// NOTE: must be called from within write transaction
-static void RLMCreateColumn(RLMRealm *realm, realm::Table &table, RLMProperty *prop) {
-    switch (prop.type) {
-            // for objects and arrays, we have to specify target table
-        case RLMPropertyTypeObject:
-        case RLMPropertyTypeArray: {
-            realm::TableRef linkTable = RLMTableForObjectClass(realm, prop.objectClassName);
-            prop.column = table.add_column_link(realm::DataType(prop.type), prop.name.UTF8String, *linkTable);
-            break;
-        }
-        default:
-            prop.column = table.add_column(realm::DataType(prop.type), prop.name.UTF8String);
-            break;
     }
 }
 
@@ -187,8 +117,7 @@ void RLMRealmSetSchema(RLMRealm *realm, RLMSchema *targetSchema, bool verify) {
 
         // read-only realms may be missing tables entirely
         if (verify && objectSchema.table) {
-            RLMObjectSchema *tableSchema = [RLMObjectSchema schemaFromTableForClassName:objectSchema.className realm:realm];
-            RLMVerifyAndAlignColumns(tableSchema, objectSchema);
+            ObjectStore::verify_and_update_column_mapping(realm.group, objectSchema->_objectSchema);
         }
     }
 }
@@ -200,8 +129,7 @@ static bool RLMRealmGetTables(RLMRealm *realm, RLMSchema *targetSchema) {
     }
 
     for (RLMObjectSchema *objectSchema in targetSchema.objectSchema) {
-        NSString *tableName = RLMTableNameForClass(objectSchema.className);
-        TableRef table = realm.group->get_table(tableName.UTF8String);
+        TableRef table = ObjectStore::table_for_object_type(realm.group, objectSchema.className.UTF8String);
         if (!table) {
             return false;
         }
@@ -211,93 +139,10 @@ static bool RLMRealmGetTables(RLMRealm *realm, RLMSchema *targetSchema) {
     return true;
 }
 
-static bool RLMPropertyHasChanged(RLMProperty *p1, RLMProperty *p2) {
-    return p2 == nil
-        || p1.type != p2.type
-        || ![p1.name isEqualToString:p2.name]
-        || (p1.objectClassName != p2.objectClassName && ![p1.objectClassName isEqualToString:p2.objectClassName]);
-}
-
-// set references to tables on targetSchema and create/update any missing or out-of-date tables
-// if update existing is true, updates existing tables, otherwise validates existing tables
-// NOTE: must be called from within write transaction
-static bool RLMRealmCreateTables(RLMRealm *realm, RLMSchema *targetSchema, bool updateExisting) {
-    // create metadata tables if neded
-    bool changed = realm::ObjectStore::create_metadata_tables(realm.group);
-
-    // first pass to create missing tables
-    NSMutableArray *objectSchemaToUpdate = [NSMutableArray array];
-    for (RLMObjectSchema *objectSchema in targetSchema.objectSchema) {
-        bool created = false;
-        objectSchema.table = RLMTableForObjectClass(realm, objectSchema.className, created).get();
-
-        // we will modify tables for any new objectSchema (table was created) or for all if updateExisting is true
-        if (updateExisting || created) {
-            [objectSchemaToUpdate addObject:objectSchema];
-            changed = true;
-        }
-    }
-
-    // second pass adds/removes columns for objectSchemaToUpdate
-    for (RLMObjectSchema *objectSchema in objectSchemaToUpdate) {
-        RLMObjectSchema *tableSchema = [RLMObjectSchema schemaFromTableForClassName:objectSchema.className realm:realm];
-
-        // add missing columns
-        for (RLMProperty *prop in objectSchema.properties) {
-            RLMProperty *tableProp = tableSchema[prop.name];
-
-            // add any new properties (new name or different type)
-            if (RLMPropertyHasChanged(prop, tableProp)) {
-                RLMCreateColumn(realm, *objectSchema.table, prop);
-                changed = true;
-            }
-        }
-
-        // remove extra columns
-        for (int i = (int)tableSchema.properties.count - 1; i >= 0; i--) {
-            RLMProperty *prop = tableSchema.properties[i];
-            if (RLMPropertyHasChanged(prop, objectSchema[prop.name])) {
-                objectSchema.table->remove_column(prop.column);
-                changed = true;
-            }
-        }
-
-        // update table metadata
-        NSString *oldPrimary = tableSchema.primaryKeyProperty.name;
-        NSString *newPrimary = objectSchema.primaryKeyProperty.name;
-        if (newPrimary) {
-            // if there is a primary key set, check if it is the same as the old key
-            if (!oldPrimary || ![oldPrimary isEqualToString:newPrimary]) {
-                realm::ObjectStore::set_primary_key_for_object(realm.group, objectSchema.className.UTF8String, newPrimary.UTF8String);
-                changed = true;
-            }
-        }
-        else if (oldPrimary) {
-            // there is no primary key, so if there was one nil out
-            realm::ObjectStore::set_primary_key_for_object(realm.group, objectSchema.className.UTF8String, "");
-            changed = true;
-        }
-    }
-
-    return changed;
-}
-
-static bool RLMMigrationRequired(RLMRealm *realm, uint64_t newVersion, uint64_t oldVersion) {
-    // validate versions
-    if (oldVersion > newVersion && oldVersion != realm::ObjectStore::NotVersioned) {
-        NSString *reason = [NSString stringWithFormat:@"Realm at path '%@' has version number %lu which is greater than the current schema version %lu. "
-                                                      @"You must call setSchemaVersion: or setDefaultRealmSchemaVersion: before accessing an upgraded Realm.",
-                            realm.path, (unsigned long)oldVersion, (unsigned long)newVersion];
-        @throw RLMException(reason, @{@"path" : realm.path});
-    }
-
-    return oldVersion != newVersion;
-}
-
 NSError *RLMUpdateRealmToSchemaVersion(RLMRealm *realm, NSUInteger newVersion, RLMSchema *targetSchema, NSError *(^migrationBlock)()) {
     // if the schema version matches, try to get all the tables without entering
     // a write transaction
-    if (!RLMMigrationRequired(realm, newVersion, realm::ObjectStore::get_schema_version(realm.group)) && RLMRealmGetTables(realm, targetSchema)) {
+    if (!ObjectStore::is_migration_required(realm.group, newVersion) && RLMRealmGetTables(realm, targetSchema)) {
         RLMRealmSetSchema(realm, targetSchema, true);
         RLMRealmUpdateIndexes(realm);
         return nil;
@@ -307,45 +152,25 @@ NSError *RLMUpdateRealmToSchemaVersion(RLMRealm *realm, NSUInteger newVersion, R
     // write transaction
     [realm beginWriteTransaction];
 
-    // Recheck the schema version after beginning the write transaction as
-    // another process may have done the migration after we opened the read
-    // transaction
-    uint64_t oldVersion = realm::ObjectStore::get_schema_version(realm.group);
-    bool migrating = RLMMigrationRequired(realm, newVersion, oldVersion);
-
-    @try {
-        // create tables
-        bool changed = RLMRealmCreateTables(realm, targetSchema, migrating);
-        RLMRealmSetSchema(realm, targetSchema, true);
-
-        if (migrating) {
-            // apply the migration block if provided and there's any old data
-            // to be migrated
-            if (oldVersion != realm::ObjectStore::NotVersioned && migrationBlock) {
-                NSError *error = migrationBlock();
-                if (error) {
-                    [realm cancelWriteTransaction];
-                    return error;
-                }
-            }
-
-            realm::ObjectStore::set_schema_version(realm.group, newVersion);
-            RLMRealmUpdateIndexes(realm);
-            changed = true;
+    try {
+        std::vector<ObjectSchema *> targetObjectSchema;
+        for (RLMObjectSchema *obj in targetSchema.objectSchema) {
+            targetObjectSchema.push_back(&(obj->_objectSchema));
         }
 
+        bool changed = ObjectStore::update_realm_with_schema(realm.group, newVersion, targetObjectSchema, [=](){ migrationBlock(); });
+        RLMRealmSetSchema(realm, targetSchema, false);
+        
         if (changed) {
             [realm commitWriteTransaction];
         }
         else {
             [realm cancelWriteTransaction];
         }
-    }
-    @catch (NSException *) {
+    } catch (std::exception e) {
         [realm cancelWriteTransaction];
-        @throw;
+        return [NSError new];   // FIXME
     }
-
     return nil;
 }
 
@@ -624,7 +449,7 @@ RLMObjectBase *RLMCreateObjectInRealmWithValue(RLMRealm *realm, NSString *classN
             RLMProperty *prop = props[i];
             // skip primary key when updating since it doesn't change
             if (created || !prop.isPrimary) {
-                id val = array[i];
+                id val = array[prop.column];
                 RLMValidateValueForProperty(val, prop, schema, false, false);
                 RLMDynamicSet(object, prop, val, creationOptions);
             }
@@ -770,3 +595,4 @@ RLMObjectBase *RLMCreateObjectAccessor(__unsafe_unretained RLMRealm *const realm
     RLMInitializeSwiftListAccessor(accessor);
     return accessor;
 }
+

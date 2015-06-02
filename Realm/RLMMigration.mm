@@ -21,6 +21,7 @@
 #import "RLMAccessor.h"
 #import "RLMObject.h"
 #import "RLMObjectSchema_Private.hpp"
+#import "RLMProperty_Private.hpp"
 #import "RLMObjectStore.h"
 #import "RLMProperty_Private.h"
 #import "RLMRealm_Dynamic.h"
@@ -127,7 +128,8 @@
 
         // disable all primary keys for migration
         for (RLMObjectSchema *objectSchema in _realm.schema.objectSchema) {
-            objectSchema.primaryKeyProperty.isPrimary = NO;
+            RLMProperty *primary = objectSchema.primaryKeyProperty;
+            primary->_property.is_primary = false;
         }
 
         // apply block and set new schema version
@@ -159,21 +161,15 @@
         return false;
     }
 
-    size_t table = _realm.group->find_table(RLMStringDataWithNSString(RLMTableNameForClass(name)));
-    if (table == realm::not_found) {
+    RLMObjectSchema *objectSchema = [_realm.schema schemaForClassName:name];
+    if (!objectSchema) {
         return false;
     }
 
-    if ([_realm.schema schemaForClassName:name]) {
-        _realm.group->get_table(table)->clear();
-    }
-    else {
-        _realm.group->remove_table(table);
-
-        std::string primaryKey = realm::ObjectStore::get_primary_key_for_object(_realm.group, name.UTF8String);
-        if (primaryKey.length()) {
-            realm::ObjectStore::set_primary_key_for_object(_realm.group, name.UTF8String, "");
-        }
+    _realm.group->remove_table(objectSchema.table->get_index_in_group());
+    std::string primaryKey = realm::ObjectStore::get_primary_key_for_object(_realm.group, name.UTF8String);
+    if (primaryKey.length()) {
+        realm::ObjectStore::set_primary_key_for_object(_realm.group, name.UTF8String, "");
     }
 
     return true;

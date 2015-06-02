@@ -19,7 +19,9 @@
 #import "RLMTestCase.h"
 
 #import <objc/runtime.h>
-#import "RLMProperty_Private.h"
+#import "RLMProperty_Private.hpp"
+#import "RLMObjectSchema_Private.hpp"
+#import "RLMRealm_Dynamic.h"
 
 @interface PropertyTests : RLMTestCase
 
@@ -75,7 +77,7 @@
         RLMObjectSchema *objectSchema = [RLMObjectSchema schemaForObjectClass:[PrimaryStringObject class]];
         RLMProperty *stringProperty = objectSchema[@"stringCol"];
         RLMProperty *expectedProperty = [[RLMProperty alloc] initWithName:@"stringCol" type:RLMPropertyTypeString objectClassName:nil indexed:YES];
-        expectedProperty.isPrimary = YES;
+        expectedProperty->_property.is_primary = true;
         XCTAssertTrue([stringProperty isEqualToProperty:expectedProperty]);
     }
 }
